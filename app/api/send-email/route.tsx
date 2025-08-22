@@ -8,6 +8,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Email configuration missing" }, { status: 400 })
     }
 
+    if (!emailSettings.apiKey.startsWith("SG.")) {
+      return NextResponse.json({ error: "Invalid SendGrid API key format" }, { status: 400 })
+    }
+
+    if (emailSettings.apiKey.length < 50) {
+      return NextResponse.json({ error: "SendGrid API key appears to be incomplete" }, { status: 400 })
+    }
+
     const emailContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #333;">Receipt - ${bill.id}</h2>
@@ -58,7 +66,7 @@ export async function POST(request: NextRequest) {
         ],
         from: {
           email: emailSettings.senderEmail,
-          name: emailSettings.senderName,
+          name: emailSettings.senderName || "Retail Store",
         },
         content: [
           {
@@ -74,10 +82,54 @@ export async function POST(request: NextRequest) {
     } else {
       const errorData = await response.text()
       console.error("SendGrid error:", errorData)
-      return NextResponse.json({ error: "Failed to send email" }, { status: 500 })
+
+      let parsedError
+      try {
+        parsedError = JSON.parse(errorData)
+      } catch {
+        parsedError = { errors: [{ message: errorData }] }
+      }
+
+      if (parsedError.errors && parsedError.errors.length > 0) {
+        const errorMessage = parsedError.errors[0].message
+        if (errorMessage.includes("invalid") || errorMessage.includes("expired") || errorMessage.includes("revoked")) {
+          return NextResponse.json(
+            {
+              error:
+                "Invalid or expired SendGrid API key. Please verify your API key in settings and ensure it has mail sending permissions.",
+              details:
+                "The API key provided is not valid or has been revoked. Please generate a new API key from your SendGrid dashboard.",
+            },
+            { status: 401 },
+          )
+        }
+        if (errorMessage.includes("sender identity")) {
+          return NextResponse.json(
+            {
+              error: "Sender email not verified. Please verify your sender email in SendGrid.",
+              details: "The sender email address must be verified in your SendGrid account before sending emails.",
+            },
+            { status: 403 },
+          )
+        }
+      }
+
+      return NextResponse.json(
+        {
+          error: "Failed to send email",
+          details: parsedError.errors?.[0]?.message || "Unknown SendGrid error",
+        },
+        { status: 500 },
+      )
     }
   } catch (error) {
     console.error("Email API error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        details: "An unexpected error occurred while processing the email request",
+      },
+      { status: 500 },
+    )
   }
 }

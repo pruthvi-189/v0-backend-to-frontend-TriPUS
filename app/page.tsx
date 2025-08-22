@@ -1,13 +1,15 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { useToast } from "@/hooks/use-toast"
+import { Toaster } from "@/components/ui/toaster"
 import {
   Dialog,
   DialogContent,
@@ -28,9 +30,20 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { useToast } from "@/hooks/use-toast"
-import { Toaster } from "@/components/ui/toaster"
-import { Package, ShoppingCart, CreditCard, Receipt, Plus, Edit, Trash2, Search, Settings, Mail } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Progress } from "@/components/ui/progress"
+import {
+  ShoppingCart,
+  Package,
+  TrendingUp,
+  Download,
+  Settings,
+  Mail,
+  BarChart3,
+  PieChart,
+  Activity,
+  DollarSign,
+} from "lucide-react"
 
 interface Product {
   code: string
@@ -43,6 +56,26 @@ interface CartItem extends Product {
   quantity: number
 }
 
+interface CustomerFeedback {
+  billId: string
+  rating: number
+  emoji: string
+  comment?: string
+  date: string
+}
+
+interface SalesAnalytics {
+  totalSales: number
+  totalRevenue: number
+  averageOrderValue: number
+  topSellingProducts: { name: string; quantity: number }[]
+  salesTrend: { date: string; sales: number }[]
+  lowStockAlerts: Product[]
+  salesForecast: { date: string; predictedSales: number; confidence: number }[]
+  revenueForecast: { period: string; predictedRevenue: number; growth: number }[]
+  demandForecast: { productName: string; predictedDemand: number; recommendedStock: number }[]
+}
+
 interface Bill {
   id: string
   date: string
@@ -52,6 +85,7 @@ interface Bill {
   customerName?: string
   customerEmail?: string
   emailSent?: boolean
+  feedback?: CustomerFeedback
 }
 
 interface EmailSettings {
@@ -60,34 +94,48 @@ interface EmailSettings {
   senderName: string
 }
 
-export default function RetailStoreApp() {
+export default function RetailStore() {
   const [products, setProducts] = useState<Product[]>([])
   const [cart, setCart] = useState<CartItem[]>([])
-  const [activeTab, setActiveTab] = useState("products")
-  const [searchTerm, setSearchTerm] = useState("")
-  const [isAddProductOpen, setIsAddProductOpen] = useState(false)
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
-  const [newProduct, setNewProduct] = useState({ code: "", name: "", price: 0, stock: 0 })
   const [bills, setBills] = useState<Bill[]>([])
+  const [searchTerm, setSearchTerm] = useState("")
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
+  const [isAddingProduct, setIsAddingProduct] = useState(false)
+  const [productCode, setProductCode] = useState("")
+  const [productName, setProductName] = useState("")
+  const [productPrice, setProductPrice] = useState(0)
+  const [productStock, setProductStock] = useState(0)
+  const [productCodeEntry, setProductCodeEntry] = useState("")
+  const [quantity, setQuantity] = useState(1)
   const [customerName, setCustomerName] = useState("")
-  const [paymentMethod, setPaymentMethod] = useState("cash")
-  const [amountReceived, setAmountReceived] = useState(0)
-
   const [customerEmail, setCustomerEmail] = useState("")
-  const [emailSettings, setEmailSettings] = useState<EmailSettings>({
-    apiKey: "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",
-    senderEmail: "",
-    senderName: "Retail Store",
-  })
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [showUpiQr, setShowUpiQr] = useState(false)
-  const [cardDetails, setCardDetails] = useState({
-    number: "",
-    expiry: "",
-    cvv: "",
-    name: "",
-  })
+  const [amountReceived, setAmountReceived] = useState(0)
+  const [cardNumber, setCardNumber] = useState("")
+  const [cardExpiry, setCardExpiry] = useState("")
+  const [cardCVV, setCardCVV] = useState("")
   const [selectedBank, setSelectedBank] = useState("")
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>({ apiKey: "", senderEmail: "", senderName: "" })
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false)
+  const [currentBillForFeedback, setCurrentBillForFeedback] = useState<Bill | null>(null)
+  const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>([])
+  const [salesAnalytics, setSalesAnalytics] = useState<SalesAnalytics>({
+    totalSales: 0,
+    totalRevenue: 0,
+    averageOrderValue: 0,
+    topSellingProducts: [],
+    salesTrend: [],
+    lowStockAlerts: [],
+    salesForecast: [],
+    revenueForecast: [],
+    demandForecast: [],
+  })
+  const [activeTab, setActiveTab] = useState<"dashboard" | "products" | "pos" | "payment" | "bills" | "analytics">(
+    "pos",
+  )
+
+  const [isTestingApiKey, setIsTestingApiKey] = useState(false)
+  const [apiKeyTestResult, setApiKeyTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
   const { toast } = useToast()
 
@@ -115,16 +163,141 @@ export default function RetailStoreApp() {
     }
   }
 
+  const saveFeedbacksToStorage = (feedbacksData: CustomerFeedback[]) => {
+    try {
+      localStorage.setItem("retail-store-feedbacks", JSON.stringify(feedbacksData))
+    } catch (error) {
+      console.error("Failed to save feedbacks to localStorage:", error)
+    }
+  }
+
+  const calculateSalesAnalytics = (billsData: Bill[], productsData: Product[]) => {
+    const totalSales = billsData.length
+    const totalRevenue = billsData.reduce((sum, bill) => sum + bill.total, 0)
+    const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0
+
+    // Calculate top selling products
+    const productSales: { [key: string]: number } = {}
+    billsData.forEach((bill) => {
+      bill.items.forEach((item) => {
+        productSales[item.name] = (productSales[item.name] || 0) + item.quantity
+      })
+    })
+
+    const topSellingProducts = Object.entries(productSales)
+      .map(([name, quantity]) => ({ name, quantity }))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5)
+
+    // Calculate sales trend (last 7 days)
+    const salesTrend = []
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      const dateStr = date.toDateString()
+      const dailySales = billsData.filter((bill) => new Date(bill.date).toDateString() === dateStr).length
+      salesTrend.push({ date: dateStr, sales: dailySales })
+    }
+
+    // Low stock alerts
+    const lowStockAlerts = productsData.filter((product) => product.stock < 5)
+
+    // Sales Forecasting - Simple linear regression based on historical trend
+    const salesForecast = []
+    if (salesTrend.length >= 3) {
+      const recentTrend = salesTrend.slice(-3)
+      const avgGrowth =
+        recentTrend.reduce((sum, day, index) => {
+          if (index === 0) return 0
+          return sum + (day.sales - recentTrend[index - 1].sales)
+        }, 0) /
+        (recentTrend.length - 1)
+
+      const lastSales = salesTrend[salesTrend.length - 1].sales
+
+      for (let i = 1; i <= 7; i++) {
+        const futureDate = new Date()
+        futureDate.setDate(futureDate.getDate() + i)
+        const predictedSales = Math.max(0, Math.round(lastSales + avgGrowth * i))
+        const confidence = Math.max(60, 95 - i * 5) // Decreasing confidence over time
+
+        salesForecast.push({
+          date: futureDate.toDateString(),
+          predictedSales,
+          confidence,
+        })
+      }
+    }
+
+    // Revenue Forecasting - Based on sales forecast and average order value
+    const revenueForecast = []
+    if (salesForecast.length > 0 && averageOrderValue > 0) {
+      const weeklyPredictedSales = salesForecast.reduce((sum, day) => sum + day.predictedSales, 0)
+      const weeklyPredictedRevenue = weeklyPredictedSales * averageOrderValue
+      const currentWeeklyRevenue = salesTrend.reduce((sum, day) => sum + day.sales, 0) * averageOrderValue
+      const weeklyGrowth =
+        currentWeeklyRevenue > 0 ? ((weeklyPredictedRevenue - currentWeeklyRevenue) / currentWeeklyRevenue) * 100 : 0
+
+      revenueForecast.push(
+        { period: "Next Week", predictedRevenue: weeklyPredictedRevenue, growth: weeklyGrowth },
+        { period: "Next Month", predictedRevenue: weeklyPredictedRevenue * 4.3, growth: weeklyGrowth * 0.8 },
+        { period: "Next Quarter", predictedRevenue: weeklyPredictedRevenue * 13, growth: weeklyGrowth * 0.6 },
+      )
+    }
+
+    // Demand Forecasting - Predict future demand for each product
+    const demandForecast = []
+    topSellingProducts.forEach((product) => {
+      const productBills = billsData.filter((bill) => bill.items.some((item) => item.name === product.name))
+
+      if (productBills.length >= 2) {
+        // Calculate average daily demand
+        const totalDays = 7 // Last 7 days
+        const dailyDemand = product.quantity / totalDays
+
+        // Predict next week's demand with seasonal adjustment
+        const seasonalMultiplier = 1.1 // Assume 10% growth
+        const predictedWeeklyDemand = Math.round(dailyDemand * 7 * seasonalMultiplier)
+
+        // Calculate recommended stock (demand + safety stock)
+        const safetyStock = Math.ceil(predictedWeeklyDemand * 0.3) // 30% safety stock
+        const recommendedStock = predictedWeeklyDemand + safetyStock
+
+        demandForecast.push({
+          productName: product.name,
+          predictedDemand: predictedWeeklyDemand,
+          recommendedStock,
+        })
+      }
+    })
+
+    return {
+      totalSales,
+      totalRevenue,
+      averageOrderValue,
+      topSellingProducts,
+      salesTrend,
+      lowStockAlerts,
+      salesForecast,
+      revenueForecast,
+      demandForecast,
+    }
+  }
+
   const loadDataFromStorage = () => {
     try {
       const savedProducts = localStorage.getItem("retail-store-products")
       const savedBills = localStorage.getItem("retail-store-bills")
       const savedEmailSettings = localStorage.getItem("retail-store-email-settings")
+      const savedFeedbacks = localStorage.getItem("retail-store-feedbacks")
+
+      let loadedProducts = []
+      let loadedBills = []
 
       if (savedProducts) {
-        setProducts(JSON.parse(savedProducts))
+        loadedProducts = JSON.parse(savedProducts)
+        setProducts(loadedProducts)
       } else {
-        // Default products if no saved data
         const defaultProducts = [
           { code: "P001", name: "Laptop", price: 50000, stock: 10 },
           { code: "P002", name: "Mouse", price: 500, stock: 25 },
@@ -132,30 +305,37 @@ export default function RetailStoreApp() {
         ]
         setProducts(defaultProducts)
         saveProductsToStorage(defaultProducts)
+        loadedProducts = defaultProducts
       }
 
       if (savedBills) {
-        setBills(JSON.parse(savedBills))
+        loadedBills = JSON.parse(savedBills)
+        setBills(loadedBills)
+      }
+
+      if (savedFeedbacks) {
+        setFeedbacks(JSON.parse(savedFeedbacks))
       }
 
       if (savedEmailSettings) {
         setEmailSettings(JSON.parse(savedEmailSettings))
       }
+
+      const analytics = calculateSalesAnalytics(loadedBills, loadedProducts)
+      setSalesAnalytics(analytics)
     } catch (error) {
       console.error("Failed to load data from localStorage:", error)
-      // Fallback to default products on error
-      const defaultProducts = [
-        { code: "P001", name: "Laptop", price: 50000, stock: 10 },
-        { code: "P002", name: "Mouse", price: 500, stock: 25 },
-        { code: "P003", name: "Keyboard", price: 1500, stock: 15 },
-      ]
-      setProducts(defaultProducts)
     }
   }
 
   useEffect(() => {
     loadDataFromStorage()
   }, [])
+
+  useEffect(() => {
+    const analytics = calculateSalesAnalytics(bills, products)
+    setSalesAnalytics(analytics)
+  }, [bills, products])
 
   useEffect(() => {
     if (products.length > 0) {
@@ -170,15 +350,70 @@ export default function RetailStoreApp() {
   }, [bills])
 
   useEffect(() => {
-    saveEmailSettingsToStorage(emailSettings)
+    if (feedbacks.length > 0) {
+      saveFeedbacksToStorage(feedbacks)
+    }
+  }, [feedbacks])
+
+  useEffect(() => {
+    if (emailSettings.apiKey || emailSettings.senderEmail) {
+      saveEmailSettingsToStorage(emailSettings)
+    }
   }, [emailSettings])
+
+  const testApiKey = async () => {
+    if (!emailSettings.apiKey || !emailSettings.senderEmail) {
+      setApiKeyTestResult({
+        success: false,
+        message: "Please enter both API key and sender email",
+      })
+      return
+    }
+
+    setIsTestingApiKey(true)
+    setApiKeyTestResult(null)
+
+    try {
+      const response = await fetch("/api/test-sendgrid", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          apiKey: emailSettings.apiKey,
+          senderEmail: emailSettings.senderEmail,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        setApiKeyTestResult({
+          success: true,
+          message: "API key is valid and sender email is verified!",
+        })
+      } else {
+        setApiKeyTestResult({
+          success: false,
+          message: result.error || "API key test failed",
+        })
+      }
+    } catch (error) {
+      setApiKeyTestResult({
+        success: false,
+        message: "Failed to test API key. Please check your connection.",
+      })
+    } finally {
+      setIsTestingApiKey(false)
+    }
+  }
 
   const sendEmailReceipt = async (bill: Bill, customerEmail: string) => {
     if (!emailSettings.apiKey || !emailSettings.senderEmail) {
       toast({
         title: "Email Configuration Missing",
-        description: "Please configure email settings first",
-        variant: "destructive",
+        description: "Please configure email settings to send receipts",
+        variant: "default",
       })
       return false
     }
@@ -205,91 +440,202 @@ export default function RetailStoreApp() {
         })
         return true
       } else {
-        throw new Error(result.error || "Failed to send email")
+        let errorTitle = "Email Failed"
+        let errorDescription = result.error || "Failed to send email"
+
+        if (response.status === 401) {
+          errorTitle = "Invalid API Key"
+          errorDescription = "Please check your SendGrid API key in settings"
+        } else if (response.status === 403) {
+          errorTitle = "Sender Not Verified"
+          errorDescription = "Please verify your sender email in SendGrid"
+        }
+
+        toast({
+          title: errorTitle,
+          description: `${errorDescription}. Payment completed successfully.`,
+          variant: "default",
+        })
+
+        return false
       }
     } catch (error) {
       console.error("Email sending error:", error)
       toast({
         title: "Email Failed",
-        description: "Failed to send receipt email",
-        variant: "destructive",
+        description: "Payment completed successfully. Email could not be sent.",
+        variant: "default",
       })
       return false
     }
   }
 
-  const generateUpiQr = (amount: number) => {
-    const upiId = "pruthvinarayanareddy@okicici"
-    const merchantName = "Retail Store"
-    const upiString = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(merchantName)}&am=${amount}&cu=INR`
-    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiString)}`
+  const exportSalesData = () => {
+    const csvContent = [
+      ["Bill ID", "Date", "Customer", "Items", "Total", "Payment Method", "Email Sent", "Feedback Rating"].join(","),
+      ...bills.map((bill) =>
+        [
+          bill.id,
+          bill.date,
+          bill.customerName || "Walk-in Customer",
+          bill.items.map((item) => `${item.name} (${item.quantity})`).join("; "),
+          bill.total.toFixed(2),
+          bill.paymentMethod,
+          bill.emailSent ? "Yes" : "No",
+          bill.feedback?.rating || "N/A",
+        ].join(","),
+      ),
+    ].join("\n")
+
+    const blob = new Blob([csvContent], { type: "text/csv" })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `sales-data-${new Date().toISOString().split("T")[0]}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+
+    toast({
+      title: "Export Successful",
+      description: "Sales data exported to CSV file",
+    })
   }
 
-  // Product Management Functions
-  const handleAddProduct = () => {
-    if (!newProduct.code || !newProduct.name || newProduct.price <= 0 || newProduct.stock < 0) {
+  const submitFeedback = (rating: number, emoji: string, comment?: string) => {
+    if (!currentBillForFeedback) return
+
+    const feedback: CustomerFeedback = {
+      billId: currentBillForFeedback.id,
+      rating,
+      emoji,
+      comment,
+      date: new Date().toISOString(),
+    }
+
+    const updatedBills = bills.map((bill) => (bill.id === currentBillForFeedback.id ? { ...bill, feedback } : bill))
+
+    setBills(updatedBills)
+    setFeedbacks([...feedbacks, feedback])
+    setShowFeedbackModal(false)
+    setCurrentBillForFeedback(null)
+
+    toast({
+      title: "Thank You!",
+      description: "Your feedback has been recorded",
+    })
+  }
+
+  const filteredProducts = products.filter(
+    (product) =>
+      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.code.toLowerCase().includes(searchTerm.toLowerCase()),
+  )
+
+  const addProduct = () => {
+    if (!productCode || !productName || productPrice <= 0 || productStock < 0) {
       toast({
-        title: "Invalid Input",
-        description: "Please fill all fields with valid values",
+        title: "Invalid Product Data",
+        description: "Please fill all fields with valid data",
         variant: "destructive",
       })
       return
     }
 
-    if (products.find((p) => p.code === newProduct.code)) {
+    if (products.some((p) => p.code === productCode)) {
       toast({
-        title: "Product Exists",
+        title: "Product Code Exists",
         description: "A product with this code already exists",
         variant: "destructive",
       })
       return
     }
 
-    setProducts([...products, { ...newProduct }])
-    setNewProduct({ code: "", name: "", price: 0, stock: 0 })
-    setIsAddProductOpen(false)
+    const newProduct: Product = {
+      code: productCode,
+      name: productName,
+      price: productPrice,
+      stock: productStock,
+    }
+
+    setProducts([...products, newProduct])
+    setProductCode("")
+    setProductName("")
+    setProductPrice(0)
+    setProductStock(0)
+    setIsAddingProduct(false)
+
     toast({
       title: "Product Added",
-      description: `${newProduct.name} has been added successfully`,
+      description: `${productName} has been added successfully`,
     })
   }
 
-  const handleEditProduct = (product: Product) => {
-    setEditingProduct(product)
-    setNewProduct({ ...product })
-    setIsAddProductOpen(true)
-  }
-
-  const handleUpdateProduct = () => {
-    if (!newProduct.code || !newProduct.name || newProduct.price <= 0 || newProduct.stock < 0) {
+  const updateProduct = () => {
+    if (!editingProduct || !productName || productPrice <= 0 || productStock < 0) {
       toast({
-        title: "Invalid Input",
-        description: "Please fill all fields with valid values",
+        title: "Invalid Product Data",
+        description: "Please fill all fields with valid data",
         variant: "destructive",
       })
       return
     }
 
-    setProducts(products.map((p) => (p.code === editingProduct?.code ? { ...newProduct } : p)))
-    setNewProduct({ code: "", name: "", price: 0, stock: 0 })
+    const updatedProducts = products.map((product) =>
+      product.code === editingProduct.code
+        ? { ...product, name: productName, price: productPrice, stock: productStock }
+        : product,
+    )
+
+    setProducts(updatedProducts)
     setEditingProduct(null)
-    setIsAddProductOpen(false)
+    setProductName("")
+    setProductPrice(0)
+    setProductStock(0)
+
     toast({
       title: "Product Updated",
-      description: `${newProduct.name} has been updated successfully`,
+      description: `${productName} has been updated successfully`,
     })
   }
 
-  const handleDeleteProduct = (code: string) => {
-    setProducts(products.filter((p) => p.code !== code))
+  const deleteProduct = (code: string) => {
+    setProducts(products.filter((product) => product.code !== code))
     toast({
       title: "Product Deleted",
       description: "Product has been removed from inventory",
     })
   }
 
-  // POS Functions
-  const addToCart = (product: Product, quantity = 1) => {
+  const addToCartByCode = () => {
+    if (!productCodeEntry) return
+
+    const product = products.find((p) => p.code.toLowerCase() === productCodeEntry.toLowerCase())
+    if (!product) {
+      toast({
+        title: "Product Not Found",
+        description: "No product found with this code",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (product.stock < quantity) {
+      toast({
+        title: "Insufficient Stock",
+        description: `Only ${product.stock} items available`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    addToCart(product)
+    setProductCodeEntry("")
+    setQuantity(1)
+  }
+
+  const addToCart = (product: Product) => {
     if (product.stock < quantity) {
       toast({
         title: "Insufficient Stock",
@@ -301,6 +647,14 @@ export default function RetailStoreApp() {
 
     const existingItem = cart.find((item) => item.code === product.code)
     if (existingItem) {
+      if (existingItem.quantity + quantity > product.stock) {
+        toast({
+          title: "Insufficient Stock",
+          description: `Only ${product.stock} items available`,
+          variant: "destructive",
+        })
+        return
+      }
       setCart(cart.map((item) => (item.code === product.code ? { ...item, quantity: item.quantity + quantity } : item)))
     } else {
       setCart([...cart, { ...product, quantity }])
@@ -308,7 +662,7 @@ export default function RetailStoreApp() {
 
     toast({
       title: "Added to Cart",
-      description: `${quantity}x ${product.name} added to cart`,
+      description: `${quantity} ${product.name}(s) added to cart`,
     })
   }
 
@@ -316,52 +670,51 @@ export default function RetailStoreApp() {
     setCart(cart.filter((item) => item.code !== code))
   }
 
-  const updateCartQuantity = (code: string, quantity: number) => {
-    if (quantity <= 0) {
+  const updateCartQuantity = (code: string, newQuantity: number) => {
+    if (newQuantity <= 0) {
       removeFromCart(code)
       return
     }
 
-    setCart(cart.map((item) => (item.code === code ? { ...item, quantity } : item)))
+    const product = products.find((p) => p.code === code)
+    if (product && newQuantity > product.stock) {
+      toast({
+        title: "Insufficient Stock",
+        description: `Only ${product.stock} items available`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    setCart(cart.map((item) => (item.code === code ? { ...item, quantity: newQuantity } : item)))
   }
 
-  const getCartTotal = () => {
-    return cart.reduce((total, item) => total + item.price * item.quantity, 0)
-  }
+  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  const gst = total * 0.18
+  const finalTotal = total + gst
 
-  const filteredProducts = products.filter(
-    (product) =>
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.code.toLowerCase().includes(searchTerm.toLowerCase()),
-  )
-
-  const processPayment = async () => {
+  const processPayment = async (paymentMethod: string) => {
     if (cart.length === 0) {
       toast({
         title: "Empty Cart",
-        description: "Please add items to cart before processing payment",
+        description: "Please add items to cart before payment",
         variant: "destructive",
       })
       return
     }
 
-    const total = getCartTotal()
-
-    if (paymentMethod === "cash" && amountReceived < total) {
+    if (paymentMethod === "cash" && amountReceived < finalTotal) {
       toast({
         title: "Insufficient Amount",
-        description: `Amount received (₹${amountReceived}) is less than total (₹${total.toFixed(2)})`,
+        description: "Amount received is less than total",
         variant: "destructive",
       })
       return
     }
 
-    if (
-      paymentMethod === "card" &&
-      (!cardDetails.number || !cardDetails.expiry || !cardDetails.cvv || !cardDetails.name)
-    ) {
+    if (paymentMethod === "card" && (!cardNumber || !cardExpiry || !cardCVV)) {
       toast({
-        title: "Incomplete Card Details",
+        title: "Card Details Required",
         description: "Please fill all card details",
         variant: "destructive",
       })
@@ -370,163 +723,324 @@ export default function RetailStoreApp() {
 
     if (paymentMethod === "netbanking" && !selectedBank) {
       toast({
-        title: "Bank Not Selected",
-        description: "Please select a bank for net banking",
+        title: "Bank Selection Required",
+        description: "Please select a bank",
         variant: "destructive",
       })
       return
     }
 
-    // Generate bill
     const newBill: Bill = {
       id: `BILL-${Date.now()}`,
       date: new Date().toLocaleString(),
       items: [...cart],
-      total,
+      total: finalTotal,
       paymentMethod,
       customerName: customerName || "Walk-in Customer",
       customerEmail: customerEmail || undefined,
       emailSent: false,
     }
 
-    // Send email if customer email is provided
     if (customerEmail && customerEmail.includes("@")) {
       const emailSent = await sendEmailReceipt(newBill, customerEmail)
       newBill.emailSent = emailSent
     }
 
+    setBills((prev) => [...prev, newBill])
+
     // Update stock
-    const updatedProducts = products.map((product) => {
-      const cartItem = cart.find((item) => item.code === product.code)
-      if (cartItem) {
-        return { ...product, stock: product.stock - cartItem.quantity }
-      }
-      return product
+    cart.forEach((item) => {
+      setProducts((prev) => prev.map((p) => (p.code === item.code ? { ...p, stock: p.stock - item.quantity } : p)))
     })
 
-    setProducts(updatedProducts)
-    setBills([newBill, ...bills])
+    // Clear cart and reset form
     setCart([])
     setCustomerName("")
     setCustomerEmail("")
     setAmountReceived(0)
-    setCardDetails({ number: "", expiry: "", cvv: "", name: "" })
+    setCardNumber("")
+    setCardExpiry("")
+    setCardCVV("")
     setSelectedBank("")
-    setShowUpiQr(false)
-    setActiveTab("bills")
+    setActiveTab("pos")
 
     toast({
       title: "Payment Successful",
-      description: `Bill ${newBill.id} generated successfully`,
+      description: `Bill ${newBill.id} created successfully${newBill.emailSent ? " and receipt sent" : ""}`,
     })
   }
 
+  const generateUPIQR = (amount: number) => {
+    const upiString = `upi://pay?pa=pruthvinarayanareddy@okicici&pn=Retail Store&am=${amount}&cu=INR&tn=Payment for Bill`
+    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiString)}`
+  }
+
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto p-6">
-        {/* Header */}
-        <div className="mb-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground mb-2">Retail Store Management</h1>
-            <p className="text-muted-foreground">Manage your products and process sales efficiently</p>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-3 rounded-xl shadow-lg">
+              <ShoppingCart className="h-8 w-8 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                Retail Store Management
+              </h1>
+              <p className="text-gray-600">Professional Point of Sale System</p>
+            </div>
           </div>
-          <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <Settings className="h-4 w-4 mr-2" />
-                Settings
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Email Settings</DialogTitle>
-                <DialogDescription>Configure email settings for sending receipts</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div>
-                  <Label htmlFor="api-key">SendGrid API Key</Label>
-                  <Input
-                    id="api-key"
-                    value={emailSettings.apiKey}
-                    onChange={(e) => setEmailSettings({ ...emailSettings, apiKey: e.target.value })}
-                    placeholder="Enter SendGrid API Key"
-                  />
+          <div className="flex gap-2">
+            <Button onClick={exportSalesData} variant="outline" className="gap-2 bg-transparent">
+              <Download className="h-4 w-4" />
+              Export Data
+            </Button>
+            <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2 bg-transparent">
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Email Settings</DialogTitle>
+                  <DialogDescription>
+                    Configure SendGrid email settings for receipts
+                    <div className="mt-2 p-3 bg-blue-50 rounded-md text-sm">
+                      <strong>Setup Instructions:</strong>
+                      <ol className="list-decimal list-inside mt-1 space-y-1">
+                        <li>Create a SendGrid account at sendgrid.com</li>
+                        <li>Go to Settings → API Keys → Create API Key</li>
+                        <li>Choose "Restricted Access" and enable "Mail Send" permission</li>
+                        <li>Copy the API key (starts with "SG.")</li>
+                        <li>Verify your sender email in SendGrid (Settings → Sender Authentication)</li>
+                      </ol>
+                    </div>
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="api-key" className="text-right">
+                      API Key
+                    </Label>
+                    <Input
+                      id="api-key"
+                      value={emailSettings.apiKey}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, apiKey: e.target.value })}
+                      className="col-span-3"
+                      placeholder="SG...."
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="sender-email" className="text-right">
+                      Sender Email
+                    </Label>
+                    <Input
+                      id="sender-email"
+                      type="email"
+                      value={emailSettings.senderEmail}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, senderEmail: e.target.value })}
+                      className="col-span-3"
+                      placeholder="your-verified-email@domain.com"
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="sender-name" className="text-right">
+                      Sender Name
+                    </Label>
+                    <Input
+                      id="sender-name"
+                      value={emailSettings.senderName}
+                      onChange={(e) => setEmailSettings({ ...emailSettings, senderName: e.target.value })}
+                      className="col-span-3"
+                      placeholder="Retail Store"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <div className="text-right">
+                      <Button
+                        onClick={testApiKey}
+                        disabled={isTestingApiKey || !emailSettings.apiKey || !emailSettings.senderEmail}
+                        variant="outline"
+                        size="sm"
+                      >
+                        {isTestingApiKey ? "Testing..." : "Test API Key"}
+                      </Button>
+                    </div>
+                    <div className="col-span-3">
+                      {apiKeyTestResult && (
+                        <div
+                          className={`p-2 rounded text-sm ${
+                            apiKeyTestResult.success
+                              ? "bg-green-50 text-green-700 border border-green-200"
+                              : "bg-red-50 text-red-700 border border-red-200"
+                          }`}
+                        >
+                          {apiKeyTestResult.message}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <Label htmlFor="sender-email">Sender Email</Label>
-                  <Input
-                    id="sender-email"
-                    type="email"
-                    value={emailSettings.senderEmail}
-                    onChange={(e) => setEmailSettings({ ...emailSettings, senderEmail: e.target.value })}
-                    placeholder="Enter your email address"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="sender-name">Sender Name</Label>
-                  <Input
-                    id="sender-name"
-                    value={emailSettings.senderName}
-                    onChange={(e) => setEmailSettings({ ...emailSettings, senderName: e.target.value })}
-                    placeholder="Enter sender name"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button onClick={() => setIsSettingsOpen(false)}>Save Settings</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <Button onClick={() => setIsSettingsOpen(false)}>Save Settings</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
-        {/* Main Navigation */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="products" className="flex items-center gap-2">
+        <Tabs defaultValue="dashboard" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-6 bg-white shadow-sm">
+            <TabsTrigger value="dashboard" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Dashboard
+            </TabsTrigger>
+            <TabsTrigger value="products" className="gap-2">
               <Package className="h-4 w-4" />
               Products
             </TabsTrigger>
-            <TabsTrigger value="pos" className="flex items-center gap-2">
+            <TabsTrigger value="pos" className="gap-2">
               <ShoppingCart className="h-4 w-4" />
               Point of Sale
             </TabsTrigger>
-            <TabsTrigger value="payment" className="flex items-center gap-2">
-              <CreditCard className="h-4 w-4" />
+            <TabsTrigger value="payment" className="gap-2">
+              <DollarSign className="h-4 w-4" />
               Payment
             </TabsTrigger>
-            <TabsTrigger value="bills" className="flex items-center gap-2">
-              <Receipt className="h-4 w-4" />
+            <TabsTrigger value="bills" className="gap-2">
+              <Activity className="h-4 w-4" />
               Bills
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Analytics
             </TabsTrigger>
           </TabsList>
 
-          {/* Product Management Tab */}
+          <TabsContent value="dashboard" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
+                  <TrendingUp className="h-4 w-4" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{salesAnalytics.totalSales}</div>
+                  <p className="text-xs opacity-80">Total transactions</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+                  <DollarSign className="h-4 w-4" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">₹{salesAnalytics.totalRevenue.toFixed(2)}</div>
+                  <p className="text-xs opacity-80">Total earnings</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-r from-purple-500 to-purple-600 text-white">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Average Order</CardTitle>
+                  <Activity className="h-4 w-4" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">₹{salesAnalytics.averageOrderValue.toFixed(2)}</div>
+                  <p className="text-xs opacity-80">Per transaction</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-r from-orange-500 to-orange-600 text-white">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Low Stock Items</CardTitle>
+                  <Package className="h-4 w-4" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{salesAnalytics.lowStockAlerts.length}</div>
+                  <p className="text-xs opacity-80">Need restocking</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5" />
+                    Top Selling Products
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {salesAnalytics.topSellingProducts.map((product, index) => (
+                      <div key={product.name} className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-blue-100 text-blue-600 rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">
+                            {index + 1}
+                          </div>
+                          <span className="font-medium">{product.name}</span>
+                        </div>
+                        <Badge variant="secondary">{product.quantity} sold</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="h-5 w-5" />
+                    Low Stock Alerts
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {salesAnalytics.lowStockAlerts.length === 0 ? (
+                      <p className="text-gray-500 text-center py-4">All products are well stocked!</p>
+                    ) : (
+                      salesAnalytics.lowStockAlerts.map((product) => (
+                        <div key={product.code} className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
+                          <div>
+                            <p className="font-medium">{product.name}</p>
+                            <p className="text-sm text-gray-600">Code: {product.code}</p>
+                          </div>
+                          <Badge variant="destructive">{product.stock} left</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
           <TabsContent value="products" className="space-y-6">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>Product Management</CardTitle>
-                    <CardDescription>Add, edit, and manage your inventory</CardDescription>
+                    <CardTitle className="flex items-center gap-2">
+                      <Package className="h-5 w-5" />
+                      Product Management
+                    </CardTitle>
+                    <CardDescription>Manage your inventory and product catalog</CardDescription>
                   </div>
-                  <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}>
+                  <Dialog open={isAddingProduct} onOpenChange={setIsAddingProduct}>
                     <DialogTrigger asChild>
-                      <Button
-                        onClick={() => {
-                          setEditingProduct(null)
-                          setNewProduct({ code: "", name: "", price: 0, stock: 0 })
-                        }}
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
+                      <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
                         Add Product
                       </Button>
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
-                        <DialogDescription>
-                          {editingProduct ? "Update product information" : "Enter product details to add to inventory"}
-                        </DialogDescription>
+                        <DialogTitle>Add New Product</DialogTitle>
+                        <DialogDescription>Enter product details to add to inventory</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-4 items-center gap-4">
@@ -535,10 +1049,9 @@ export default function RetailStoreApp() {
                           </Label>
                           <Input
                             id="code"
-                            value={newProduct.code}
-                            onChange={(e) => setNewProduct({ ...newProduct, code: e.target.value.toUpperCase() })}
+                            value={productCode}
+                            onChange={(e) => setProductCode(e.target.value)}
                             className="col-span-3"
-                            disabled={!!editingProduct}
                           />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
@@ -547,22 +1060,20 @@ export default function RetailStoreApp() {
                           </Label>
                           <Input
                             id="name"
-                            value={newProduct.name}
-                            onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                            value={productName}
+                            onChange={(e) => setProductName(e.target.value)}
                             className="col-span-3"
                           />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="price" className="text-right">
-                            Price (₹)
+                            Price
                           </Label>
                           <Input
                             id="price"
                             type="number"
-                            value={newProduct.price}
-                            onChange={(e) =>
-                              setNewProduct({ ...newProduct, price: Number.parseFloat(e.target.value) || 0 })
-                            }
+                            value={productPrice}
+                            onChange={(e) => setProductPrice(Number.parseFloat(e.target.value) || 0)}
                             className="col-span-3"
                           />
                         </div>
@@ -573,181 +1084,250 @@ export default function RetailStoreApp() {
                           <Input
                             id="stock"
                             type="number"
-                            value={newProduct.stock}
-                            onChange={(e) =>
-                              setNewProduct({ ...newProduct, stock: Number.parseInt(e.target.value) || 0 })
-                            }
+                            value={productStock}
+                            onChange={(e) => setProductStock(Number.parseInt(e.target.value) || 0)}
                             className="col-span-3"
                           />
                         </div>
                       </div>
                       <DialogFooter>
-                        <Button onClick={editingProduct ? handleUpdateProduct : handleAddProduct}>
-                          {editingProduct ? "Update Product" : "Add Product"}
-                        </Button>
+                        <Button onClick={addProduct}>Add Product</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
                 </div>
               </CardHeader>
               <CardContent>
-                {/* Search */}
-                <div className="flex items-center space-x-2 mb-4">
-                  <Search className="h-4 w-4 text-muted-foreground" />
+                <div className="mb-4">
                   <Input
-                    placeholder="Search products..."
+                    placeholder="Search products by name or code..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="max-w-sm"
                   />
                 </div>
-
-                {/* Products Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Code</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Price</TableHead>
-                      <TableHead>Stock</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredProducts.map((product) => (
-                      <TableRow key={product.code}>
-                        <TableCell className="font-medium">{product.code}</TableCell>
-                        <TableCell>{product.name}</TableCell>
-                        <TableCell>₹{product.price.toFixed(2)}</TableCell>
-                        <TableCell>{product.stock}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={product.stock > 10 ? "default" : product.stock > 0 ? "secondary" : "destructive"}
-                          >
-                            {product.stock > 10 ? "In Stock" : product.stock > 0 ? "Low Stock" : "Out of Stock"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center space-x-2">
-                            <Button variant="outline" size="sm" onClick={() => handleEditProduct(product)}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="outline" size="sm">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete Product</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Are you sure you want to delete {product.name}? This action cannot be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => handleDeleteProduct(product.code)}>
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                <div className="grid gap-4">
+                  {filteredProducts.map((product) => (
+                    <div
+                      key={product.code}
+                      className="flex items-center justify-between p-4 border rounded-lg bg-white shadow-sm hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-4">
+                          <div className="bg-blue-100 text-blue-600 px-3 py-1 rounded-full text-sm font-medium">
+                            {product.code}
                           </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                          <div>
+                            <h3 className="font-semibold">{product.name}</h3>
+                            <p className="text-gray-600">₹{product.price.toFixed(2)}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <Badge variant={product.stock < 5 ? "destructive" : "secondary"}>Stock: {product.stock}</Badge>
+                        <div className="flex gap-2">
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingProduct(product)
+                                  setProductName(product.name)
+                                  setProductPrice(product.price)
+                                  setProductStock(product.stock)
+                                }}
+                              >
+                                Edit
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                              <DialogHeader>
+                                <DialogTitle>Edit Product</DialogTitle>
+                                <DialogDescription>Update product details</DialogDescription>
+                              </DialogHeader>
+                              <div className="grid gap-4 py-4">
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                  <Label htmlFor="edit-name" className="text-right">
+                                    Name
+                                  </Label>
+                                  <Input
+                                    id="edit-name"
+                                    value={productName}
+                                    onChange={(e) => setProductName(e.target.value)}
+                                    className="col-span-3"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                  <Label htmlFor="edit-price" className="text-right">
+                                    Price
+                                  </Label>
+                                  <Input
+                                    id="edit-price"
+                                    type="number"
+                                    value={productPrice}
+                                    onChange={(e) => setProductPrice(Number.parseFloat(e.target.value) || 0)}
+                                    className="col-span-3"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                  <Label htmlFor="edit-stock" className="text-right">
+                                    Stock
+                                  </Label>
+                                  <Input
+                                    id="edit-stock"
+                                    type="number"
+                                    value={productStock}
+                                    onChange={(e) => setProductStock(Number.parseInt(e.target.value) || 0)}
+                                    className="col-span-3"
+                                  />
+                                </div>
+                              </div>
+                              <DialogFooter>
+                                <Button onClick={updateProduct}>Update Product</Button>
+                              </DialogFooter>
+                            </DialogContent>
+                          </Dialog>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="destructive" size="sm">
+                                Delete
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete Product</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete {product.name}? This action cannot be undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => deleteProduct(product.code)}>
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Point of Sale Tab */}
           <TabsContent value="pos" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Product Selection */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Select Products</CardTitle>
-                  <CardDescription>Click on products to add them to cart</CardDescription>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="h-5 w-5" />
+                    Add Items to Cart
+                  </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {products
-                      .filter((p) => p.stock > 0)
-                      .map((product) => (
-                        <Card
-                          key={product.code}
-                          className="cursor-pointer hover:shadow-md transition-shadow"
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Enter product code..."
+                      value={productCodeEntry}
+                      onChange={(e) => setProductCodeEntry(e.target.value)}
+                      onKeyPress={(e) => e.key === "Enter" && addToCartByCode()}
+                      className="flex-1"
+                    />
+                    <Input
+                      type="number"
+                      min="1"
+                      value={quantity}
+                      onChange={(e) => setQuantity(Number.parseInt(e.target.value) || 1)}
+                      className="w-20"
+                    />
+                    <Button onClick={addToCartByCode} className="bg-gradient-to-r from-green-600 to-green-700">
+                      Add
+                    </Button>
+                  </div>
+                  <Separator />
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {products.map((product) => (
+                      <div
+                        key={product.code}
+                        className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50"
+                      >
+                        <div>
+                          <p className="font-medium">{product.name}</p>
+                          <p className="text-sm text-gray-600">
+                            ₹{product.price} • Stock: {product.stock}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
                           onClick={() => addToCart(product)}
+                          disabled={product.stock === 0}
+                          className="bg-gradient-to-r from-blue-600 to-indigo-600"
                         >
-                          <CardContent className="p-4">
-                            <div className="flex justify-between items-start mb-2">
-                              <h3 className="font-semibold">{product.name}</h3>
-                              <Badge variant="secondary">{product.code}</Badge>
-                            </div>
-                            <p className="text-2xl font-bold text-primary">₹{product.price.toFixed(2)}</p>
-                            <p className="text-sm text-muted-foreground">Stock: {product.stock}</p>
-                          </CardContent>
-                        </Card>
-                      ))}
+                          Add
+                        </Button>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Shopping Cart */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Shopping Cart</CardTitle>
-                  <CardDescription>{cart.length} items in cart</CardDescription>
+                  <CardTitle className="flex items-center gap-2">
+                    <ShoppingCart className="h-5 w-5" />
+                    Shopping Cart
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   {cart.length === 0 ? (
-                    <p className="text-center text-muted-foreground py-8">Cart is empty</p>
+                    <p className="text-center text-gray-500 py-8">Cart is empty</p>
                   ) : (
                     <div className="space-y-4">
                       {cart.map((item) => (
                         <div key={item.code} className="flex items-center justify-between p-3 border rounded-lg">
-                          <div>
-                            <h4 className="font-medium">{item.name}</h4>
-                            <p className="text-sm text-muted-foreground">₹{item.price.toFixed(2)} each</p>
+                          <div className="flex-1">
+                            <p className="font-medium">{item.name}</p>
+                            <p className="text-sm text-gray-600">₹{item.price} each</p>
                           </div>
-                          <div className="flex items-center space-x-2">
+                          <div className="flex items-center gap-2">
                             <Button
-                              variant="outline"
                               size="sm"
+                              variant="outline"
                               onClick={() => updateCartQuantity(item.code, item.quantity - 1)}
                             >
                               -
                             </Button>
                             <span className="w-8 text-center">{item.quantity}</span>
                             <Button
-                              variant="outline"
                               size="sm"
+                              variant="outline"
                               onClick={() => updateCartQuantity(item.code, item.quantity + 1)}
                             >
                               +
                             </Button>
-                            <Button variant="destructive" size="sm" onClick={() => removeFromCart(item.code)}>
-                              <Trash2 className="h-4 w-4" />
+                            <Button size="sm" variant="destructive" onClick={() => removeFromCart(item.code)}>
+                              Remove
                             </Button>
                           </div>
                         </div>
                       ))}
-                      <div className="border-t pt-4">
-                        <div className="flex justify-between items-center text-lg font-bold">
-                          <span>Total:</span>
-                          <span>₹{getCartTotal().toFixed(2)}</span>
+                      <Separator />
+                      <div className="space-y-2 bg-gray-50 p-4 rounded-lg">
+                        <div className="flex justify-between">
+                          <span>Subtotal:</span>
+                          <span>₹{total.toFixed(2)}</span>
                         </div>
-                        <Button
-                          className="w-full mt-4"
-                          onClick={() => setActiveTab("payment")}
-                          disabled={cart.length === 0}
-                        >
-                          Proceed to Payment
-                        </Button>
+                        <div className="flex justify-between">
+                          <span>GST (18%):</span>
+                          <span>₹{gst.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold text-lg">
+                          <span>Total:</span>
+                          <span>₹{finalTotal.toFixed(2)}</span>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -756,86 +1336,65 @@ export default function RetailStoreApp() {
             </div>
           </TabsContent>
 
-          {/* Payment Tab */}
           <TabsContent value="payment" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Order Summary */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Order Summary</CardTitle>
-                  <CardDescription>Review your order before payment</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {cart.length === 0 ? (
-                    <p className="text-center text-muted-foreground py-8">No items in cart</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {cart.map((item) => (
-                        <div key={item.code} className="flex justify-between items-center">
-                          <div>
-                            <h4 className="font-medium">{item.name}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              ₹{item.price.toFixed(2)} × {item.quantity}
-                            </p>
-                          </div>
-                          <span className="font-medium">₹{(item.price * item.quantity).toFixed(2)}</span>
-                        </div>
-                      ))}
-                      <div className="border-t pt-4">
-                        <div className="flex justify-between items-center text-xl font-bold">
-                          <span>Total Amount:</span>
-                          <span>₹{getCartTotal().toFixed(2)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Payment Form */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Payment Details</CardTitle>
-                  <CardDescription>Enter payment information</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <DollarSign className="h-5 w-5" />
+                  Payment Processing
+                </CardTitle>
+                <CardDescription>Process customer payment and generate receipt</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="customer">Customer Name (Optional)</Label>
+                    <Label htmlFor="customer-name">Customer Name</Label>
                     <Input
-                      id="customer"
+                      id="customer-name"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       placeholder="Enter customer name"
                     />
                   </div>
-
                   <div>
-                    <Label htmlFor="customer-email">Customer Email (Optional)</Label>
+                    <Label htmlFor="customer-email">Customer Email (for receipt)</Label>
                     <Input
                       id="customer-email"
                       type="email"
                       value={customerEmail}
                       onChange={(e) => setCustomerEmail(e.target.value)}
-                      placeholder="Enter customer email for receipt"
+                      placeholder="customer@example.com"
                     />
                   </div>
+                </div>
 
-                  <div>
-                    <Label htmlFor="payment-method">Payment Method</Label>
-                    <select
-                      id="payment-method"
-                      value={paymentMethod}
-                      onChange={(e) => setPaymentMethod(e.target.value)}
-                      className="w-full p-2 border border-input rounded-md bg-background"
-                    >
-                      <option value="cash">Cash</option>
-                      <option value="card">Card</option>
-                      <option value="netbanking">Net Banking</option>
-                      <option value="upi">UPI</option>
-                    </select>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="font-semibold mb-2">Order Summary</h3>
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <span>Subtotal:</span>
+                      <span>₹{total.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>GST (18%):</span>
+                      <span>₹{gst.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-lg">
+                      <span>Total Amount:</span>
+                      <span>₹{finalTotal.toFixed(2)}</span>
+                    </div>
                   </div>
+                </div>
 
-                  {paymentMethod === "cash" && (
+                <Tabs defaultValue="cash" className="w-full">
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="cash">Cash</TabsTrigger>
+                    <TabsTrigger value="card">Card</TabsTrigger>
+                    <TabsTrigger value="netbanking">Net Banking</TabsTrigger>
+                    <TabsTrigger value="upi">UPI</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="cash" className="space-y-4">
                     <div>
                       <Label htmlFor="amount-received">Amount Received</Label>
                       <Input
@@ -845,190 +1404,485 @@ export default function RetailStoreApp() {
                         onChange={(e) => setAmountReceived(Number.parseFloat(e.target.value) || 0)}
                         placeholder="Enter amount received"
                       />
-                      {amountReceived > getCartTotal() && (
-                        <p className="text-sm text-muted-foreground mt-1">
-                          Change: ₹{(amountReceived - getCartTotal()).toFixed(2)}
-                        </p>
-                      )}
                     </div>
-                  )}
+                    {amountReceived > 0 && (
+                      <div className="bg-green-50 p-3 rounded-lg">
+                        <p className="text-green-800">
+                          Change to return: ₹{Math.max(0, amountReceived - finalTotal).toFixed(2)}
+                        </p>
+                      </div>
+                    )}
+                    <Button
+                      onClick={() => processPayment("cash")}
+                      disabled={cart.length === 0}
+                      className="w-full bg-gradient-to-r from-green-600 to-green-700"
+                    >
+                      Process Cash Payment
+                    </Button>
+                  </TabsContent>
 
-                  {paymentMethod === "card" && (
-                    <div className="space-y-3">
+                  <TabsContent value="card" className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="card-number">Card Number</Label>
                         <Input
                           id="card-number"
-                          value={cardDetails.number}
-                          onChange={(e) => setCardDetails({ ...cardDetails, number: e.target.value })}
+                          value={cardNumber}
+                          onChange={(e) => setCardNumber(e.target.value)}
                           placeholder="1234 5678 9012 3456"
-                          maxLength={19}
                         />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label htmlFor="card-expiry">Expiry Date</Label>
-                          <Input
-                            id="card-expiry"
-                            value={cardDetails.expiry}
-                            onChange={(e) => setCardDetails({ ...cardDetails, expiry: e.target.value })}
-                            placeholder="MM/YY"
-                            maxLength={5}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="card-cvv">CVV</Label>
-                          <Input
-                            id="card-cvv"
-                            value={cardDetails.cvv}
-                            onChange={(e) => setCardDetails({ ...cardDetails, cvv: e.target.value })}
-                            placeholder="123"
-                            maxLength={3}
-                          />
-                        </div>
                       </div>
                       <div>
-                        <Label htmlFor="card-name">Cardholder Name</Label>
+                        <Label htmlFor="card-expiry">Expiry Date</Label>
                         <Input
-                          id="card-name"
-                          value={cardDetails.name}
-                          onChange={(e) => setCardDetails({ ...cardDetails, name: e.target.value })}
-                          placeholder="Enter cardholder name"
+                          id="card-expiry"
+                          value={cardExpiry}
+                          onChange={(e) => setCardExpiry(e.target.value)}
+                          placeholder="MM/YY"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="card-cvv">CVV</Label>
+                        <Input
+                          id="card-cvv"
+                          value={cardCVV}
+                          onChange={(e) => setCardCVV(e.target.value)}
+                          placeholder="123"
                         />
                       </div>
                     </div>
-                  )}
+                    <Button
+                      onClick={() => processPayment("card")}
+                      disabled={cart.length === 0}
+                      className="w-full bg-gradient-to-r from-blue-600 to-indigo-600"
+                    >
+                      Process Card Payment
+                    </Button>
+                  </TabsContent>
 
-                  {paymentMethod === "netbanking" && (
+                  <TabsContent value="netbanking" className="space-y-4">
                     <div>
                       <Label htmlFor="bank-select">Select Bank</Label>
-                      <select
-                        id="bank-select"
-                        value={selectedBank}
-                        onChange={(e) => setSelectedBank(e.target.value)}
-                        className="w-full p-2 border border-input rounded-md bg-background"
-                      >
-                        <option value="">Select Bank</option>
-                        <option value="sbi">State Bank of India</option>
-                        <option value="hdfc">HDFC Bank</option>
-                        <option value="icici">ICICI Bank</option>
-                        <option value="axis">Axis Bank</option>
-                        <option value="pnb">Punjab National Bank</option>
-                        <option value="bob">Bank of Baroda</option>
-                      </select>
+                      <Select value={selectedBank} onValueChange={setSelectedBank}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose your bank" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sbi">State Bank of India</SelectItem>
+                          <SelectItem value="hdfc">HDFC Bank</SelectItem>
+                          <SelectItem value="icici">ICICI Bank</SelectItem>
+                          <SelectItem value="axis">Axis Bank</SelectItem>
+                          <SelectItem value="pnb">Punjab National Bank</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  )}
+                    <Button
+                      onClick={() => processPayment("netbanking")}
+                      disabled={cart.length === 0}
+                      className="w-full bg-gradient-to-r from-purple-600 to-purple-700"
+                    >
+                      Process Net Banking Payment
+                    </Button>
+                  </TabsContent>
 
-                  {paymentMethod === "upi" && (
-                    <div className="space-y-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setShowUpiQr(!showUpiQr)}
-                        className="w-full"
-                      >
-                        {showUpiQr ? "Hide QR Code" : "Generate QR Code"}
-                      </Button>
-                      {showUpiQr && (
-                        <div className="text-center space-y-3">
-                          <img
-                            src={generateUpiQr(getCartTotal()) || "/placeholder.svg"}
-                            alt="UPI QR Code"
-                            className="mx-auto border rounded-lg"
-                          />
-                          <p className="text-sm text-muted-foreground">
-                            Scan QR code to pay ₹{getCartTotal().toFixed(2)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">UPI ID: pruthvinarayanareddy@okicici</p>
-                        </div>
-                      )}
+                  <TabsContent value="upi" className="space-y-4">
+                    <div className="text-center">
+                      <p className="mb-4">Scan QR code to pay ₹{finalTotal.toFixed(2)}</p>
+                      <div className="flex justify-center">
+                        <img
+                          src={generateUPIQR(finalTotal) || "/placeholder.svg"}
+                          alt="UPI QR Code"
+                          className="border rounded-lg shadow-md"
+                        />
+                      </div>
+                      <p className="text-sm text-gray-600 mt-2">UPI ID: pruthvinarayanareddy@okicici</p>
                     </div>
-                  )}
-
-                  <Button className="w-full" onClick={processPayment} disabled={cart.length === 0}>
-                    <CreditCard className="h-4 w-4 mr-2" />
-                    Process Payment
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
+                    <Button
+                      onClick={() => processPayment("upi")}
+                      disabled={cart.length === 0}
+                      className="w-full bg-gradient-to-r from-orange-600 to-orange-700"
+                    >
+                      Confirm UPI Payment
+                    </Button>
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
           </TabsContent>
 
-          {/* Bills Tab */}
           <TabsContent value="bills" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Bill Management</CardTitle>
-                <CardDescription>View and manage generated bills</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5" />
+                  Transaction History
+                </CardTitle>
+                <CardDescription>View all completed transactions and receipts</CardDescription>
               </CardHeader>
               <CardContent>
                 {bills.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">No bills generated yet</p>
+                  <p className="text-center text-gray-500 py-8">No transactions yet</p>
                 ) : (
                   <div className="space-y-4">
                     {bills.map((bill) => (
-                      <Card key={bill.id}>
-                        <CardHeader>
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <CardTitle className="text-lg">{bill.id}</CardTitle>
-                              <CardDescription>
-                                {bill.date} • {bill.customerName} • {bill.paymentMethod.toUpperCase()}
-                                {bill.customerEmail && (
-                                  <span className="ml-2">
-                                    <Mail
-                                      className={`inline h-3 w-3 ${bill.emailSent ? "text-green-500" : "text-red-500"}`}
-                                    />
-                                    {bill.emailSent ? " Email Sent" : " Email Failed"}
-                                  </span>
-                                )}
-                              </CardDescription>
-                            </div>
-                            <Badge variant="outline">₹{bill.total.toFixed(2)}</Badge>
+                      <div key={bill.id} className="border rounded-lg p-4 bg-white shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <h3 className="font-semibold">{bill.id}</h3>
+                            <p className="text-sm text-gray-600">{bill.date}</p>
                           </div>
-                        </CardHeader>
-                        <CardContent>
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Item</TableHead>
-                                <TableHead>Qty</TableHead>
-                                <TableHead>Price</TableHead>
-                                <TableHead>Total</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {bill.items.map((item) => (
-                                <TableRow key={item.code}>
-                                  <TableCell>{item.name}</TableCell>
-                                  <TableCell>{item.quantity}</TableCell>
-                                  <TableCell>₹{item.price.toFixed(2)}</TableCell>
-                                  <TableCell>₹{(item.price * item.quantity).toFixed(2)}</TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                          {bill.customerEmail && (
-                            <div className="mt-4">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => sendEmailReceipt(bill, bill.customerEmail!)}
-                              >
-                                <Mail className="h-4 w-4 mr-2" />
-                                Resend Email
-                              </Button>
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
+                          <div className="text-right">
+                            <p className="font-bold text-lg">₹{bill.total.toFixed(2)}</p>
+                            <Badge variant="outline">{bill.paymentMethod.toUpperCase()}</Badge>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm">Customer: {bill.customerName}</p>
+                            <p className="text-sm">Items: {bill.items.length}</p>
+                            {bill.feedback && (
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-lg">{bill.feedback.emoji}</span>
+                                <span className="text-sm text-gray-600">Rating: {bill.feedback.rating}/5</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {bill.emailSent && (
+                              <Badge variant="secondary" className="gap-1">
+                                <Mail className="h-3 w-3" />
+                                Email Sent
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="analytics" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+              <Card className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <TrendingUp className="h-4 w-4" />
+                    Sales Forecast (Next Week)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {salesAnalytics.salesForecast.length > 0
+                      ? salesAnalytics.salesForecast.reduce((sum, day) => sum + day.predictedSales, 0)
+                      : "N/A"}
+                  </div>
+                  <p className="text-xs opacity-80">Predicted transactions</p>
+                  {salesAnalytics.salesForecast.length > 0 && (
+                    <p className="text-xs opacity-90 mt-1">
+                      Avg confidence:{" "}
+                      {Math.round(
+                        salesAnalytics.salesForecast.reduce((sum, day) => sum + day.confidence, 0) /
+                          salesAnalytics.salesForecast.length,
+                      )}
+                      %
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-r from-emerald-500 to-green-600 text-white">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <DollarSign className="h-4 w-4" />
+                    Revenue Forecast
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    ₹
+                    {salesAnalytics.revenueForecast.length > 0
+                      ? salesAnalytics.revenueForecast[0].predictedRevenue.toFixed(0)
+                      : "0"}
+                  </div>
+                  <p className="text-xs opacity-80">Next week projection</p>
+                  {salesAnalytics.revenueForecast.length > 0 && (
+                    <p className="text-xs opacity-90 mt-1">
+                      {salesAnalytics.revenueForecast[0].growth >= 0 ? "+" : ""}
+                      {salesAnalytics.revenueForecast[0].growth.toFixed(1)}% growth
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-r from-violet-500 to-purple-600 text-white">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Package className="h-4 w-4" />
+                    Inventory Optimization
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{salesAnalytics.demandForecast.length}</div>
+                  <p className="text-xs opacity-80">Products analyzed</p>
+                  <p className="text-xs opacity-90 mt-1">Smart restocking recommendations</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5" />
+                    Sales Forecast (Next 7 Days)
+                  </CardTitle>
+                  <CardDescription>AI-powered sales predictions with confidence levels</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {salesAnalytics.salesForecast.length === 0 ? (
+                      <p className="text-gray-500 text-center py-4">Need more historical data for forecasting</p>
+                    ) : (
+                      salesAnalytics.salesForecast.map((forecast, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg"
+                        >
+                          <div>
+                            <p className="font-medium">
+                              {new Date(forecast.date).toLocaleDateString("en-US", {
+                                weekday: "short",
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </p>
+                            <p className="text-sm text-gray-600">{forecast.confidence}% confidence</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-blue-600">{forecast.predictedSales} sales</p>
+                            <Progress value={forecast.confidence} className="w-16 h-2" />
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <DollarSign className="h-5 w-5" />
+                    Revenue Projections
+                  </CardTitle>
+                  <CardDescription>Future revenue estimates and growth trends</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {salesAnalytics.revenueForecast.length === 0 ? (
+                      <p className="text-gray-500 text-center py-4">Insufficient data for revenue forecasting</p>
+                    ) : (
+                      salesAnalytics.revenueForecast.map((forecast, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg"
+                        >
+                          <div>
+                            <p className="font-medium">{forecast.period}</p>
+                            <p className="text-sm text-gray-600">
+                              {forecast.growth >= 0 ? "+" : ""}
+                              {forecast.growth.toFixed(1)}% growth
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-green-600">₹{forecast.predictedRevenue.toFixed(0)}</p>
+                            <Badge variant={forecast.growth >= 0 ? "default" : "destructive"} className="text-xs">
+                              {forecast.growth >= 0 ? "Growth" : "Decline"}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="h-5 w-5" />
+                    Demand Forecasting & Inventory
+                  </CardTitle>
+                  <CardDescription>Smart inventory recommendations based on predicted demand</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {salesAnalytics.demandForecast.length === 0 ? (
+                      <p className="text-gray-500 text-center py-4">More sales data needed for demand forecasting</p>
+                    ) : (
+                      salesAnalytics.demandForecast.map((forecast, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-50 to-violet-50 rounded-lg"
+                        >
+                          <div>
+                            <p className="font-medium">{forecast.productName}</p>
+                            <p className="text-sm text-gray-600">Predicted weekly demand: {forecast.predictedDemand}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-purple-600">Stock: {forecast.recommendedStock}</p>
+                            <Badge variant="outline" className="text-xs">
+                              Recommended
+                            </Badge>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <PieChart className="h-5 w-5" />
+                    Customer Feedback Analysis
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {[5, 4, 3, 2, 1].map((rating) => {
+                      const count = feedbacks.filter((f) => f.rating === rating).length
+                      const percentage = feedbacks.length > 0 ? (count / feedbacks.length) * 100 : 0
+                      const emoji =
+                        rating === 5 ? "😍" : rating === 4 ? "😊" : rating === 3 ? "😐" : rating === 2 ? "😞" : "😡"
+
+                      return (
+                        <div key={rating} className="flex items-center gap-3">
+                          <span className="text-lg">{emoji}</span>
+                          <span className="w-12 text-sm">{rating} star</span>
+                          <Progress value={percentage} className="flex-1" />
+                          <span className="text-sm text-gray-600 w-12">{count}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-800">
+                      Average Rating:{" "}
+                      {feedbacks.length > 0
+                        ? (feedbacks.reduce((sum, f) => sum + f.rating, 0) / feedbacks.length).toFixed(1)
+                        : "N/A"}
+                      /5
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  AI-Powered Business Insights & Recommendations
+                </CardTitle>
+                <CardDescription>Smart recommendations based on forecasting analysis</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
+                    <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4" />
+                      Sales Performance
+                    </h4>
+                    <p className="text-sm text-green-700">
+                      {salesAnalytics.salesForecast.length > 0
+                        ? salesAnalytics.salesForecast.reduce((sum, day) => sum + day.predictedSales, 0) >
+                          salesAnalytics.totalSales
+                          ? "📈 Growth expected! Prepare for increased demand."
+                          : "📊 Stable sales predicted. Focus on customer retention."
+                        : salesAnalytics.totalSales > 10
+                          ? "Excellent sales volume!"
+                          : salesAnalytics.totalSales > 5
+                            ? "Good sales activity"
+                            : "Consider marketing strategies"}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border border-blue-200">
+                    <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Inventory Optimization
+                    </h4>
+                    <p className="text-sm text-blue-700">
+                      {salesAnalytics.demandForecast.length > 0
+                        ? `🎯 ${salesAnalytics.demandForecast.length} products analyzed. Check demand forecasts for restocking.`
+                        : salesAnalytics.lowStockAlerts.length === 0
+                          ? "All products well stocked"
+                          : `${salesAnalytics.lowStockAlerts.length} items need restocking`}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-gradient-to-r from-purple-50 to-violet-50 rounded-lg border border-purple-200">
+                    <h4 className="font-semibold text-purple-800 mb-2 flex items-center gap-2">
+                      <DollarSign className="h-4 w-4" />
+                      Revenue Growth
+                    </h4>
+                    <p className="text-sm text-purple-700">
+                      {salesAnalytics.revenueForecast.length > 0
+                        ? salesAnalytics.revenueForecast[0].growth >= 5
+                          ? "🚀 Strong growth predicted! Consider expanding inventory."
+                          : salesAnalytics.revenueForecast[0].growth >= 0
+                            ? "📈 Positive growth expected. Maintain current strategy."
+                            : "⚠️ Revenue decline predicted. Review pricing and promotions."
+                        : feedbacks.length === 0
+                          ? "No feedback yet"
+                          : feedbacks.reduce((sum, f) => sum + f.rating, 0) / feedbacks.length >= 4
+                            ? "Customers are happy!"
+                            : "Room for improvement"}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
+
+        <Dialog open={showFeedbackModal} onOpenChange={setShowFeedbackModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>How was your experience?</DialogTitle>
+              <DialogDescription>Please rate your shopping experience</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-6 py-4">
+              <div className="text-center">
+                <p className="mb-4">Rate your experience:</p>
+                <div className="flex justify-center gap-2">
+                  {[
+                    { rating: 1, emoji: "😡", label: "Very Bad" },
+                    { rating: 2, emoji: "😞", label: "Bad" },
+                    { rating: 3, emoji: "😐", label: "Average" },
+                    { rating: 4, emoji: "😊", label: "Good" },
+                    { rating: 5, emoji: "😍", label: "Very Good" },
+                  ].map(({ rating, emoji, label }) => (
+                    <Button
+                      key={rating}
+                      variant="outline"
+                      className="flex flex-col gap-1 h-auto p-3 hover:bg-blue-50 bg-transparent"
+                      onClick={() => submitFeedback(rating, emoji)}
+                    >
+                      <span className="text-2xl">{emoji}</span>
+                      <span className="text-xs">{label}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
       <Toaster />
     </div>
