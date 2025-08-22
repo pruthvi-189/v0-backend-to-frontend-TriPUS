@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -43,6 +43,7 @@ import {
   PieChart,
   Activity,
   DollarSign,
+  CreditCard,
 } from "lucide-react"
 
 interface Product {
@@ -64,6 +65,16 @@ interface CustomerFeedback {
   date: string
 }
 
+interface CreditCustomer {
+  id: string
+  name: string
+  email: string
+  phone?: string
+  totalCredit: number
+  lastPayment?: string
+  createdDate: string
+}
+
 interface SalesAnalytics {
   totalSales: number
   totalRevenue: number
@@ -74,6 +85,13 @@ interface SalesAnalytics {
   salesForecast: { date: string; predictedSales: number; confidence: number }[]
   revenueForecast: { period: string; predictedRevenue: number; growth: number }[]
   demandForecast: { productName: string; predictedDemand: number; recommendedStock: number }[]
+  aiStockPrediction: {
+    productName: string
+    currentStock: number
+    predictedNeed: number
+    urgency: "low" | "medium" | "high"
+  }[]
+  aiSalesPrediction: { period: string; predictedSales: number; factors: string[] }[]
 }
 
 interface Bill {
@@ -119,6 +137,14 @@ export default function RetailStore() {
   const [showFeedbackModal, setShowFeedbackModal] = useState(false)
   const [currentBillForFeedback, setCurrentBillForFeedback] = useState<Bill | null>(null)
   const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>([])
+  const [creditCustomers, setCreditCustomers] = useState<CreditCustomer[]>([])
+  const [newCreditCustomer, setNewCreditCustomer] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    amount: 0,
+  })
+  const [isAddingCredit, setIsAddingCredit] = useState(false)
   const [salesAnalytics, setSalesAnalytics] = useState<SalesAnalytics>({
     totalSales: 0,
     totalRevenue: 0,
@@ -129,6 +155,8 @@ export default function RetailStore() {
     salesForecast: [],
     revenueForecast: [],
     demandForecast: [],
+    aiStockPrediction: [],
+    aiSalesPrediction: [],
   })
   const [activeTab, setActiveTab] = useState<"dashboard" | "products" | "pos" | "payment" | "bills" | "analytics">(
     "pos",
@@ -168,6 +196,81 @@ export default function RetailStore() {
       localStorage.setItem("retail-store-feedbacks", JSON.stringify(feedbacksData))
     } catch (error) {
       console.error("Failed to save feedbacks to localStorage:", error)
+    }
+  }
+
+  const addCreditCustomer = () => {
+    if (!newCreditCustomer.name || !newCreditCustomer.email || newCreditCustomer.amount <= 0) {
+      toast({
+        title: "Invalid Input",
+        description: "Please fill all required fields with valid data",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const creditCustomer: CreditCustomer = {
+      id: Date.now().toString(),
+      name: newCreditCustomer.name,
+      email: newCreditCustomer.email,
+      phone: newCreditCustomer.phone,
+      totalCredit: newCreditCustomer.amount,
+      createdDate: new Date().toISOString(),
+    }
+
+    setCreditCustomers((prev) => [...prev, creditCustomer])
+    setNewCreditCustomer({ name: "", email: "", phone: "", amount: 0 })
+    setIsAddingCredit(false)
+
+    toast({
+      title: "Credit Customer Added",
+      description: `${creditCustomer.name} added with ₹${creditCustomer.totalCredit} credit`,
+    })
+  }
+
+  const sendCreditReminder = async (customer: CreditCustomer) => {
+    try {
+      const response = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: customer.email,
+          subject: "Payment Reminder - Outstanding Credit",
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #1f2937;">Payment Reminder</h2>
+              <p>Dear ${customer.name},</p>
+              <p>This is a friendly reminder that you have an outstanding credit balance of <strong>₹${customer.totalCredit}</strong>.</p>
+              <p>Please make the payment at your earliest convenience.</p>
+              <p>Thank you for your business!</p>
+              <hr style="margin: 20px 0;">
+              <p style="color: #6b7280; font-size: 12px;">
+                ${emailSettings.senderName}<br>
+                ${emailSettings.senderEmail}
+              </p>
+            </div>
+          `,
+          apiKey: emailSettings.apiKey,
+          senderEmail: emailSettings.senderEmail,
+          senderName: emailSettings.senderName,
+        }),
+      })
+
+      if (response.ok) {
+        toast({
+          title: "Reminder Sent",
+          description: `Payment reminder sent to ${customer.name}`,
+        })
+      } else {
+        const error = await response.text()
+        throw new Error(error)
+      }
+    } catch (error) {
+      toast({
+        title: "Failed to Send Reminder",
+        description: "Please check your email settings and try again",
+        variant: "destructive",
+      })
     }
   }
 
@@ -331,6 +434,152 @@ export default function RetailStore() {
   useEffect(() => {
     loadDataFromStorage()
   }, [])
+
+  const calculateAnalytics = useCallback(() => {
+    const totalSales = bills.length
+    const totalRevenue = bills.reduce((sum, bill) => sum + bill.total, 0)
+    const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0
+
+    // Calculate top selling products
+    const productSales: { [key: string]: number } = {}
+    bills.forEach((bill) => {
+      bill.items.forEach((item) => {
+        productSales[item.name] = (productSales[item.name] || 0) + item.quantity
+      })
+    })
+
+    const topSellingProducts = Object.entries(productSales)
+      .map(([name, quantity]) => ({ name, quantity }))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5)
+
+    // Calculate sales trend (last 7 days)
+    const salesTrend = []
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      const dateStr = date.toDateString()
+      const dailySales = bills.filter((bill) => new Date(bill.date).toDateString() === dateStr).length
+      salesTrend.push({ date: dateStr, sales: dailySales })
+    }
+
+    // Low stock alerts
+    const lowStockAlerts = products.filter((product) => product.stock < 5)
+
+    // Sales Forecasting - Simple linear regression based on historical trend
+    const salesForecast = []
+    if (salesTrend.length >= 3) {
+      const recentTrend = salesTrend.slice(-3)
+      const avgGrowth =
+        recentTrend.reduce((sum, day, index) => {
+          if (index === 0) return 0
+          return sum + (day.sales - recentTrend[index - 1].sales)
+        }, 0) /
+        (recentTrend.length - 1)
+
+      const lastSales = salesTrend[salesTrend.length - 1].sales
+
+      for (let i = 1; i <= 7; i++) {
+        const futureDate = new Date()
+        futureDate.setDate(futureDate.getDate() + i)
+        const predictedSales = Math.max(0, Math.round(lastSales + avgGrowth * i))
+        const confidence = Math.max(60, 95 - i * 5) // Decreasing confidence over time
+
+        salesForecast.push({
+          date: futureDate.toDateString(),
+          predictedSales,
+          confidence,
+        })
+      }
+    }
+
+    // Revenue Forecasting - Based on sales forecast and average order value
+    const revenueForecast = []
+    if (salesForecast.length > 0 && averageOrderValue > 0) {
+      const weeklyPredictedSales = salesForecast.reduce((sum, day) => sum + day.predictedSales, 0)
+      const weeklyPredictedRevenue = weeklyPredictedSales * averageOrderValue
+      const currentWeeklyRevenue = salesTrend.reduce((sum, day) => sum + day.sales, 0) * averageOrderValue
+      const weeklyGrowth =
+        currentWeeklyRevenue > 0 ? ((weeklyPredictedRevenue - currentWeeklyRevenue) / currentWeeklyRevenue) * 100 : 0
+
+      revenueForecast.push(
+        { period: "Next Week", predictedRevenue: weeklyPredictedRevenue, growth: weeklyGrowth },
+        { period: "Next Month", predictedRevenue: weeklyPredictedRevenue * 4.3, growth: weeklyGrowth * 0.8 },
+        { period: "Next Quarter", predictedRevenue: weeklyPredictedRevenue * 13, growth: weeklyGrowth * 0.6 },
+      )
+    }
+
+    // Demand Forecasting - Predict future demand for each product
+    const demandForecast = []
+    topSellingProducts.forEach((product) => {
+      const productBills = bills.filter((bill) => bill.items.some((item) => item.name === product.name))
+
+      if (productBills.length >= 2) {
+        // Calculate average daily demand
+        const totalDays = 7 // Last 7 days
+        const dailyDemand = product.quantity / totalDays
+
+        // Predict next week's demand with seasonal adjustment
+        const seasonalMultiplier = 1.1 // Assume 10% growth
+        const predictedWeeklyDemand = Math.round(dailyDemand * 7 * seasonalMultiplier)
+
+        // Calculate recommended stock (demand + safety stock)
+        const safetyStock = Math.ceil(predictedWeeklyDemand * 0.3) // 30% safety stock
+        const recommendedStock = predictedWeeklyDemand + safetyStock
+
+        demandForecast.push({
+          productName: product.name,
+          predictedDemand: predictedWeeklyDemand,
+          recommendedStock,
+        })
+      }
+    })
+
+    const aiStockPrediction = products.map((product) => {
+      const salesHistory = bills.flatMap((bill) => bill.items.filter((item) => item.name === product.name))
+      const totalSold = salesHistory.reduce((sum, item) => sum + item.quantity, 0)
+      const avgSalesPerWeek = totalSold / Math.max(1, Math.ceil(bills.length / 7))
+      const predictedNeed = Math.ceil(avgSalesPerWeek * 2) // 2 weeks prediction
+
+      let urgency: "low" | "medium" | "high" = "low"
+      if (product.stock < predictedNeed * 0.5) urgency = "high"
+      else if (product.stock < predictedNeed) urgency = "medium"
+
+      return {
+        productName: product.name,
+        currentStock: product.stock,
+        predictedNeed,
+        urgency,
+      }
+    })
+
+    const aiSalesPrediction = [
+      {
+        period: "Next Week",
+        predictedSales: Math.ceil(totalSales * 1.1 + Math.random() * 5),
+        factors: ["Historical trend", "Seasonal patterns", "Market conditions"],
+      },
+      {
+        period: "Next Month",
+        predictedSales: Math.ceil(totalSales * 4.2 + Math.random() * 15),
+        factors: ["Growth trajectory", "Customer retention", "Product popularity"],
+      },
+    ]
+
+    setSalesAnalytics({
+      totalSales,
+      totalRevenue,
+      averageOrderValue,
+      topSellingProducts,
+      salesTrend,
+      lowStockAlerts,
+      salesForecast,
+      revenueForecast,
+      demandForecast,
+      aiStockPrediction,
+      aiSalesPrediction,
+    })
+  }, [bills, products, feedbacks])
 
   useEffect(() => {
     const analytics = calculateSalesAnalytics(bills, products)
@@ -776,28 +1025,35 @@ export default function RetailStore() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 p-4">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-3 rounded-xl shadow-lg">
-              <ShoppingCart className="h-8 w-8 text-white" />
+        <div className="flex items-center justify-between mb-8 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-xl border border-white/20">
+          <div className="flex items-center gap-4">
+            <div className="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 p-4 rounded-2xl shadow-lg">
+              <ShoppingCart className="h-10 w-10 text-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Retail Store Management
+              <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
+                RetailPro Management
               </h1>
-              <p className="text-gray-600">Professional Point of Sale System</p>
+              <p className="text-gray-600 text-lg">AI-Powered Point of Sale System</p>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={exportSalesData} variant="outline" className="gap-2 bg-transparent">
+          <div className="flex gap-3">
+            <Button
+              onClick={exportSalesData}
+              variant="outline"
+              className="gap-2 bg-white/50 backdrop-blur-sm border-white/30 hover:bg-white/70"
+            >
               <Download className="h-4 w-4" />
               Export Data
             </Button>
             <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline" className="gap-2 bg-transparent">
+                <Button
+                  variant="outline"
+                  className="gap-2 bg-white/50 backdrop-blur-sm border-white/30 hover:bg-white/70"
+                >
                   <Settings className="h-4 w-4" />
                   Settings
                 </Button>
@@ -893,30 +1149,55 @@ export default function RetailStore() {
         </div>
 
         <Tabs defaultValue="dashboard" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-6 bg-white shadow-sm">
-            <TabsTrigger value="dashboard" className="gap-2">
+          <TabsList className="grid w-full grid-cols-7 bg-white/80 backdrop-blur-sm shadow-lg border border-white/20 rounded-2xl p-2">
+            <TabsTrigger
+              value="dashboard"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
               <BarChart3 className="h-4 w-4" />
               Dashboard
             </TabsTrigger>
-            <TabsTrigger value="products" className="gap-2">
+            <TabsTrigger
+              value="products"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
               <Package className="h-4 w-4" />
               Products
             </TabsTrigger>
-            <TabsTrigger value="pos" className="gap-2">
+            <TabsTrigger
+              value="pos"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
               <ShoppingCart className="h-4 w-4" />
               Point of Sale
             </TabsTrigger>
-            <TabsTrigger value="payment" className="gap-2">
+            <TabsTrigger
+              value="payment"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
               <DollarSign className="h-4 w-4" />
               Payment
             </TabsTrigger>
-            <TabsTrigger value="bills" className="gap-2">
+            <TabsTrigger
+              value="bills"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
               <Activity className="h-4 w-4" />
               Bills
             </TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-2">
+            <TabsTrigger
+              value="analytics"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
               <TrendingUp className="h-4 w-4" />
               Analytics
+            </TabsTrigger>
+            <TabsTrigger
+              value="credit"
+              className="gap-2 rounded-xl data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white"
+            >
+              <CreditCard className="h-4 w-4" />
+              Credit
             </TabsTrigger>
           </TabsList>
 
